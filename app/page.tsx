@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 
 type ResultType = 'description' | 'exhibition' | 'poster' | null
 
@@ -19,6 +19,11 @@ interface PosterResult {
   description: string
 }
 
+// Константы валидации
+const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
+const MAX_FILES = 10
+const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
+
 export default function Home() {
   const [images, setImages] = useState<File[]>([])
   const [resultType, setResultType] = useState<ResultType>(null)
@@ -29,11 +34,58 @@ export default function Home() {
   const [exhibitionOptions, setExhibitionOptions] = useState<ExhibitionOption[]>([])
   const [selectedExhibition, setSelectedExhibition] = useState<ExhibitionOption | null>(null)
   const [posterResult, setPosterResult] = useState<PosterResult | null>(null)
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
+  
+  const abortControllerRef = useRef<AbortController | null>(null)
+
+  // Валидация изображений
+  const validateImages = (files: File[]): { valid: File[]; errors: string[] } => {
+    const valid: File[] = []
+    const errors: string[] = []
+
+    if (files.length > MAX_FILES) {
+      errors.push(`Максимальное количество файлов: ${MAX_FILES}. Выбрано: ${files.length}`)
+      return { valid, errors }
+    }
+
+    files.forEach((file) => {
+      // Проверка типа файла
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        errors.push(`Файл "${file.name}" имеет недопустимый формат. Разрешены: JPEG, PNG, WebP, GIF`)
+        return
+      }
+
+      // Проверка размера файла
+      if (file.size > MAX_FILE_SIZE) {
+        errors.push(
+          `Файл "${file.name}" слишком большой (${(file.size / 1024 / 1024).toFixed(2)} MB). Максимум: ${MAX_FILE_SIZE / 1024 / 1024} MB`
+        )
+        return
+      }
+
+      valid.push(file)
+    })
+
+    return { valid, errors }
+  }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files)
-      setImages(files)
+      const { valid, errors } = validateImages(files)
+
+      if (errors.length > 0) {
+        setError(errors.join('\n'))
+        return
+      }
+
+      if (valid.length === 0) {
+        setError('Нет валидных изображений для загрузки')
+        return
+      }
+
+      setImages(valid)
       setResult(null)
       setResultType(null)
       setError(null)
@@ -41,7 +93,66 @@ export default function Home() {
       setExhibitionOptions([])
       setSelectedExhibition(null)
       setPosterResult(null)
+      setProgress(null)
+      setRetryCount(0)
     }
+  }
+
+  // Функция для выполнения запроса с retry
+  const fetchWithRetry = async (
+    url: string,
+    options: RequestInit,
+    maxRetries = 2
+  ): Promise<Response> => {
+    let lastError: Error | null = null
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort()
+        }
+        abortControllerRef.current = new AbortController()
+
+        const response = await fetch(url, {
+          ...options,
+          signal: abortControllerRef.current.signal,
+        })
+
+        if (response.ok) {
+          setRetryCount(0)
+          return response
+        }
+
+        // Если это последняя попытка, выбрасываем ошибку
+        if (attempt === maxRetries) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        }
+
+        // Ждем перед повтором (экспоненциальная задержка)
+        await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000))
+        setRetryCount(attempt + 1)
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+
+        // Если это не последняя попытка и ошибка не связана с отменой, продолжаем
+        if (attempt < maxRetries && err instanceof Error && err.name !== 'AbortError') {
+          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1000))
+          setRetryCount(attempt + 1)
+          continue
+        }
+
+        // Если это отмена или последняя попытка, выбрасываем ошибку
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error('Запрос был отменен')
+        }
+
+        if (attempt === maxRetries) {
+          throw lastError
+        }
+      }
+    }
+
+    throw lastError || new Error('Неизвестная ошибка')
   }
 
   const handleDescription = async () => {
@@ -54,6 +165,7 @@ export default function Home() {
     setError(null)
     setResultType('description')
     setResult(null)
+    setProgress({ current: 0, total: images.length })
 
     try {
       const formData = new FormData()
@@ -61,7 +173,7 @@ export default function Home() {
         formData.append('images', image)
       })
 
-      const response = await fetch('/api/describe', {
+      const response = await fetchWithRetry('/api/describe', {
         method: 'POST',
         body: formData,
       })
@@ -74,6 +186,7 @@ export default function Home() {
 
       if (data.success && data.descriptions) {
         setDescriptions(data.descriptions)
+        setProgress({ current: images.length, total: images.length })
         // Форматируем описания для отображения
         const formattedDescriptions = data.descriptions
           .map(
@@ -88,10 +201,23 @@ export default function Home() {
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : 'Произошла ошибка при генерации описаний'
-      setError(errorMessage)
+      
+      // Более понятные сообщения об ошибках
+      let userFriendlyMessage = errorMessage
+      if (errorMessage.includes('AbortError') || errorMessage.includes('отменен')) {
+        userFriendlyMessage = 'Запрос был отменен'
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('таймаут')) {
+        userFriendlyMessage = 'Превышено время ожидания. Попробуйте еще раз или уменьшите количество изображений.'
+      } else if (errorMessage.includes('network') || errorMessage.includes('сеть')) {
+        userFriendlyMessage = 'Ошибка сети. Проверьте подключение к интернету и попробуйте еще раз.'
+      }
+      
+      setError(userFriendlyMessage)
       setResult(null)
+      console.error('Ошибка при генерации описаний:', err)
     } finally {
       setLoading(false)
+      setProgress(null)
     }
   }
 
@@ -114,15 +240,19 @@ export default function Home() {
     setSelectedExhibition(null)
 
     try {
-      const response = await fetch('/api/exhibition', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetchWithRetry(
+        '/api/exhibition',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            descriptions: descriptions.map((desc) => desc.description),
+          }),
         },
-        body: JSON.stringify({
-          descriptions: descriptions.map((desc) => desc.description),
-        }),
-      })
+        2
+      )
 
       const data = await response.json()
 
@@ -140,7 +270,16 @@ export default function Home() {
         err instanceof Error
           ? err.message
           : 'Произошла ошибка при генерации названий выставки'
-      setError(errorMessage)
+      
+      let userFriendlyMessage = errorMessage
+      if (errorMessage.includes('отменен')) {
+        userFriendlyMessage = 'Запрос был отменен'
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('таймаут')) {
+        userFriendlyMessage = 'Превышено время ожидания. Попробуйте еще раз.'
+      }
+      
+      setError(userFriendlyMessage)
+      console.error('Ошибка при генерации названий выставки:', err)
     } finally {
       setLoading(false)
     }
@@ -159,16 +298,20 @@ export default function Home() {
     setPosterResult(null)
 
     try {
-      const response = await fetch('/api/poster', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const response = await fetchWithRetry(
+        '/api/poster',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            exhibitionTitle: selectedExhibition.title,
+            descriptions: descriptions.map((desc) => desc.description),
+          }),
         },
-        body: JSON.stringify({
-          exhibitionTitle: selectedExhibition.title,
-          descriptions: descriptions.map((desc) => desc.description),
-        }),
-      })
+        2
+      )
 
       const data = await response.json()
 
@@ -187,11 +330,31 @@ export default function Home() {
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : 'Произошла ошибка при генерации афиши'
-      setError(errorMessage)
+      
+      let userFriendlyMessage = errorMessage
+      if (errorMessage.includes('отменен')) {
+        userFriendlyMessage = 'Запрос был отменен'
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('таймаут')) {
+        userFriendlyMessage = 'Превышено время ожидания. Попробуйте еще раз.'
+      }
+      
+      setError(userFriendlyMessage)
       setResult(null)
+      console.error('Ошибка при генерации афиши:', err)
     } finally {
       setLoading(false)
     }
+  }
+
+  // Функция для отмены текущего запроса
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setLoading(false)
+    setProgress(null)
+    setError('Запрос отменен')
   }
 
   const handleSelectExhibition = (option: ExhibitionOption) => {
@@ -245,15 +408,18 @@ export default function Home() {
           {images.length > 0 && (
             <div className="mt-4">
               <p className="text-sm text-gray-600 mb-2">
-                Загружено картинок: {images.length}
+                Загружено картинок: {images.length} / {MAX_FILES}
               </p>
               <div className="flex flex-wrap gap-2">
                 {images.map((img, index) => (
                   <div
                     key={index}
-                    className="text-xs bg-blue-100 text-blue-800 px-3 py-1 rounded-full"
+                    className="text-xs bg-blue-100 text-blue-800 px-3 py-1 rounded-full flex items-center gap-2"
                   >
-                    {img.name}
+                    <span>{img.name}</span>
+                    <span className="text-blue-600">
+                      ({(img.size / 1024 / 1024).toFixed(2)} MB)
+                    </span>
                   </div>
                 ))}
               </div>
@@ -303,12 +469,38 @@ export default function Home() {
           {loading && (
             <div className="flex flex-col items-center justify-center py-8">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-              <p className="text-gray-600">
+              <p className="text-gray-600 mb-2">
                 {resultType === 'description' && 'Генерация описаний картин...'}
                 {resultType === 'exhibition' && 'Генерация вариантов названий выставки...'}
                 {resultType === 'poster' && 'Генерация макета афиши...'}
                 {!resultType && 'Обработка...'}
               </p>
+              {progress && (
+                <div className="w-full max-w-md">
+                  <div className="bg-gray-200 rounded-full h-2 mb-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${(progress.current / progress.total) * 100}%`,
+                      }}
+                    ></div>
+                  </div>
+                  <p className="text-sm text-gray-500 text-center">
+                    Обработано: {progress.current} из {progress.total}
+                  </p>
+                </div>
+              )}
+              {retryCount > 0 && (
+                <p className="text-sm text-yellow-600 mt-2">
+                  Повторная попытка {retryCount}...
+                </p>
+              )}
+              <button
+                onClick={handleCancel}
+                className="mt-4 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+              >
+                Отменить
+              </button>
             </div>
           )}
 
