@@ -43,6 +43,20 @@ export default function Home() {
   const abortControllerRef = useRef<AbortController | null>(null)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Очистка ресурсов при размонтировании
+  useEffect(() => {
+    return () => {
+      // Очистка таймера дебаунсинга
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+      // Отмена активных запросов
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
+
   // Валидация изображений
   const validateImages = (files: File[]): { valid: File[]; errors: string[] } => {
     const valid: File[] = []
