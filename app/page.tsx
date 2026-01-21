@@ -1,6 +1,8 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
+import { optimizeImages } from '@/lib/imageOptimization'
+import { cacheManager } from '@/lib/cache'
 
 type ResultType = 'description' | 'exhibition' | 'poster' | null
 
@@ -36,8 +38,10 @@ export default function Home() {
   const [posterResult, setPosterResult] = useState<PosterResult | null>(null)
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null)
   const [retryCount, setRetryCount] = useState(0)
+  const [optimizing, setOptimizing] = useState(false)
   
   const abortControllerRef = useRef<AbortController | null>(null)
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   // Валидация изображений
   const validateImages = (files: File[]): { valid: File[]; errors: string[] } => {
@@ -70,7 +74,7 @@ export default function Home() {
     return { valid, errors }
   }
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const files = Array.from(e.target.files)
       const { valid, errors } = validateImages(files)
@@ -85,16 +89,30 @@ export default function Home() {
         return
       }
 
-      setImages(valid)
-      setResult(null)
-      setResultType(null)
+      // Оптимизируем изображения
+      setOptimizing(true)
       setError(null)
-      setDescriptions([])
-      setExhibitionOptions([])
-      setSelectedExhibition(null)
-      setPosterResult(null)
-      setProgress(null)
-      setRetryCount(0)
+      try {
+        const optimizedFiles = await optimizeImages(valid)
+        setImages(optimizedFiles)
+        setResult(null)
+        setResultType(null)
+        setError(null)
+        setDescriptions([])
+        setExhibitionOptions([])
+        setSelectedExhibition(null)
+        setPosterResult(null)
+        setProgress(null)
+        setRetryCount(0)
+        // Очищаем кэш при загрузке новых изображений
+        cacheManager.clear()
+      } catch (err) {
+        console.error('Ошибка при оптимизации изображений:', err)
+        // В случае ошибки используем оригинальные файлы
+        setImages(valid)
+      } finally {
+        setOptimizing(false)
+      }
     }
   }
 
@@ -155,9 +173,44 @@ export default function Home() {
     throw lastError || new Error('Неизвестная ошибка')
   }
 
+  // Дебаунсинг для предотвращения множественных кликов
+  const debouncedHandler = useCallback((handler: () => void) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      handler()
+    }, 300)
+  }, [])
+
+  // Генерация ключа кэша на основе изображений
+  const generateImageCacheKey = (files: File[]): string => {
+    return files
+      .map((f) => `${f.name}-${f.size}-${f.lastModified}`)
+      .join('|')
+  }
+
   const handleDescription = async () => {
     if (images.length === 0) {
       setError('Пожалуйста, загрузите картинки')
+      return
+    }
+
+    // Проверяем кэш
+    const cacheKey = generateImageCacheKey(images)
+    const cached = cacheManager.get<PaintingDescription[]>('descriptions', cacheKey)
+    
+    if (cached) {
+      setDescriptions(cached)
+      setResultType('description')
+      const formattedDescriptions = cached
+        .map(
+          (desc: PaintingDescription) =>
+            `## ${desc.imageName}\n\n${desc.description}`
+        )
+        .join('\n\n---\n\n')
+      setResult(formattedDescriptions)
+      setError(null)
       return
     }
 
@@ -185,6 +238,9 @@ export default function Home() {
       }
 
       if (data.success && data.descriptions) {
+        // Сохраняем в кэш
+        cacheManager.set('descriptions', cacheKey, data.descriptions)
+        
         setDescriptions(data.descriptions)
         setProgress({ current: images.length, total: images.length })
         // Форматируем описания для отображения
@@ -233,6 +289,19 @@ export default function Home() {
       return
     }
 
+    // Проверяем кэш
+    const descriptionsText = descriptions.map((desc) => desc.description).join('|')
+    const cached = cacheManager.get<ExhibitionOption[]>('exhibition', descriptionsText)
+    
+    if (cached) {
+      setExhibitionOptions(cached)
+      setResultType('exhibition')
+      setResult(null)
+      setSelectedExhibition(null)
+      setError(null)
+      return
+    }
+
     setLoading(true)
     setError(null)
     setResultType('exhibition')
@@ -261,6 +330,8 @@ export default function Home() {
       }
 
       if (data.success && data.options) {
+        // Сохраняем в кэш
+        cacheManager.set('exhibition', descriptionsText, data.options)
         setExhibitionOptions(data.options)
       } else {
         throw new Error('Неожиданный формат ответа от сервера')
@@ -288,6 +359,19 @@ export default function Home() {
   const handlePoster = async () => {
     if (!selectedExhibition) {
       setError('Пожалуйста, сначала выберите вариант названия выставки')
+      return
+    }
+
+    // Проверяем кэш
+    const cacheKey = `${selectedExhibition.title}|${descriptions.map((d) => d.description).join('|')}`
+    const cached = cacheManager.get<PosterResult>('poster', cacheKey)
+    
+    if (cached) {
+      setPosterResult(cached)
+      setResultType('poster')
+      const formattedResult = `## Макет афиши\n\n${cached.poster}\n\n## Описание выставки\n\n${cached.description}`
+      setResult(formattedResult)
+      setError(null)
       return
     }
 
@@ -320,6 +404,9 @@ export default function Home() {
       }
 
       if (data.success && data.result) {
+        // Сохраняем в кэш
+        cacheManager.set('poster', cacheKey, data.result)
+        
         setPosterResult(data.result)
         // Форматируем результат для отображения
         const formattedResult = `## Макет афиши\n\n${data.result.poster}\n\n## Описание выставки\n\n${data.result.description}`
@@ -405,6 +492,13 @@ export default function Home() {
               </span>
             </label>
           </div>
+          {optimizing && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800">
+                ⚙️ Оптимизация изображений...
+              </p>
+            </div>
+          )}
           {images.length > 0 && (
             <div className="mt-4">
               <p className="text-sm text-gray-600 mb-2">
@@ -431,22 +525,34 @@ export default function Home() {
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <div className="flex flex-wrap gap-4 justify-center">
             <button
-              onClick={handleDescription}
-              disabled={loading || images.length === 0}
+              onClick={() => {
+                if (!loading) {
+                  debouncedHandler(handleDescription)
+                }
+              }}
+              disabled={loading || images.length === 0 || optimizing}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-md hover:shadow-lg"
             >
               Описание
             </button>
             <button
-              onClick={handleExhibition}
-              disabled={loading || images.length === 0 || descriptions.length === 0}
+              onClick={() => {
+                if (!loading) {
+                  debouncedHandler(handleExhibition)
+                }
+              }}
+              disabled={loading || images.length === 0 || descriptions.length === 0 || optimizing}
               className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-md hover:shadow-lg"
             >
               Выставка
             </button>
             <button
-              onClick={handlePoster}
-              disabled={loading || !selectedExhibition}
+              onClick={() => {
+                if (!loading) {
+                  debouncedHandler(handlePoster)
+                }
+              }}
+              disabled={loading || !selectedExhibition || optimizing}
               className="px-6 py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-md hover:shadow-lg"
             >
               Афиша
