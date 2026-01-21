@@ -4,13 +4,31 @@ import { useState } from 'react'
 
 type ResultType = 'description' | 'exhibition' | 'poster' | null
 
+interface PaintingDescription {
+  imageName: string
+  description: string
+}
+
+interface ExhibitionOption {
+  id: number
+  title: string
+}
+
+interface PosterResult {
+  poster: string
+  description: string
+}
+
 export default function Home() {
   const [images, setImages] = useState<File[]>([])
   const [resultType, setResultType] = useState<ResultType>(null)
   const [result, setResult] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [exhibitionOptions, setExhibitionOptions] = useState<string[]>([])
-  const [selectedExhibition, setSelectedExhibition] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [descriptions, setDescriptions] = useState<PaintingDescription[]>([])
+  const [exhibitionOptions, setExhibitionOptions] = useState<ExhibitionOption[]>([])
+  const [selectedExhibition, setSelectedExhibition] = useState<ExhibitionOption | null>(null)
+  const [posterResult, setPosterResult] = useState<PosterResult | null>(null)
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -18,61 +36,167 @@ export default function Home() {
       setImages(files)
       setResult(null)
       setResultType(null)
+      setError(null)
+      setDescriptions([])
       setExhibitionOptions([])
       setSelectedExhibition(null)
+      setPosterResult(null)
     }
   }
 
   const handleDescription = async () => {
     if (images.length === 0) {
-      alert('Пожалуйста, загрузите картинки')
+      setError('Пожалуйста, загрузите картинки')
       return
     }
+
     setLoading(true)
+    setError(null)
     setResultType('description')
-    // TODO: Интеграция с AI для генерации описаний
-    setTimeout(() => {
-      setResult('Описания картин будут сгенерированы здесь...')
+    setResult(null)
+
+    try {
+      const formData = new FormData()
+      images.forEach((image) => {
+        formData.append('images', image)
+      })
+
+      const response = await fetch('/api/describe', {
+        method: 'POST',
+        body: formData,
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Ошибка при генерации описаний')
+      }
+
+      if (data.success && data.descriptions) {
+        setDescriptions(data.descriptions)
+        // Форматируем описания для отображения
+        const formattedDescriptions = data.descriptions
+          .map(
+            (desc: PaintingDescription, index: number) =>
+              `## ${desc.imageName}\n\n${desc.description}`
+          )
+          .join('\n\n---\n\n')
+        setResult(formattedDescriptions)
+      } else {
+        throw new Error('Неожиданный формат ответа от сервера')
+      }
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'Произошла ошибка при генерации описаний'
+      setError(errorMessage)
+      setResult(null)
+    } finally {
       setLoading(false)
-    }, 1000)
+    }
   }
 
   const handleExhibition = async () => {
     if (images.length === 0) {
-      alert('Пожалуйста, загрузите картинки')
+      setError('Пожалуйста, загрузите картинки')
       return
     }
+
+    // Если описания еще не сгенерированы, сначала генерируем их
+    if (descriptions.length === 0) {
+      setError('Сначала сгенерируйте описания картин, нажав кнопку "Описание"')
+      return
+    }
+
     setLoading(true)
+    setError(null)
     setResultType('exhibition')
-    // TODO: Интеграция с AI для генерации вариантов названий
-    setTimeout(() => {
-      const options = [
-        'Вариант 1: Современное искусство в фокусе',
-        'Вариант 2: Художественное наследие',
-        'Вариант 3: Визуальные истории'
-      ]
-      setExhibitionOptions(options)
-      setResult(null)
+    setResult(null)
+    setSelectedExhibition(null)
+
+    try {
+      const response = await fetch('/api/exhibition', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          descriptions: descriptions.map((desc) => desc.description),
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Ошибка при генерации названий выставки')
+      }
+
+      if (data.success && data.options) {
+        setExhibitionOptions(data.options)
+      } else {
+        throw new Error('Неожиданный формат ответа от сервера')
+      }
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error
+          ? err.message
+          : 'Произошла ошибка при генерации названий выставки'
+      setError(errorMessage)
+    } finally {
       setLoading(false)
-    }, 1000)
+    }
   }
 
   const handlePoster = async () => {
     if (!selectedExhibition) {
-      alert('Пожалуйста, сначала выберите вариант названия выставки')
+      setError('Пожалуйста, сначала выберите вариант названия выставки')
       return
     }
+
     setLoading(true)
+    setError(null)
     setResultType('poster')
-    // TODO: Интеграция с AI для генерации афиши
-    setTimeout(() => {
-      setResult('Макет афиши и краткое описание будут сгенерированы здесь...')
+    setResult(null)
+    setPosterResult(null)
+
+    try {
+      const response = await fetch('/api/poster', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          exhibitionTitle: selectedExhibition.title,
+          descriptions: descriptions.map((desc) => desc.description),
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Ошибка при генерации афиши')
+      }
+
+      if (data.success && data.result) {
+        setPosterResult(data.result)
+        // Форматируем результат для отображения
+        const formattedResult = `## Макет афиши\n\n${data.result.poster}\n\n## Описание выставки\n\n${data.result.description}`
+        setResult(formattedResult)
+      } else {
+        throw new Error('Неожиданный формат ответа от сервера')
+      }
+    } catch (err) {
+      const errorMessage =
+        err instanceof Error ? err.message : 'Произошла ошибка при генерации афиши'
+      setError(errorMessage)
+      setResult(null)
+    } finally {
       setLoading(false)
-    }, 1000)
+    }
   }
 
-  const handleSelectExhibition = (option: string) => {
+  const handleSelectExhibition = (option: ExhibitionOption) => {
     setSelectedExhibition(option)
+    setError(null)
   }
 
   return (
@@ -149,7 +273,7 @@ export default function Home() {
             </button>
             <button
               onClick={handleExhibition}
-              disabled={loading || images.length === 0}
+              disabled={loading || images.length === 0 || descriptions.length === 0}
               className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors shadow-md hover:shadow-lg"
             >
               Выставка
@@ -169,10 +293,22 @@ export default function Home() {
           <h2 className="text-2xl font-semibold text-gray-800 mb-4">
             Результат
           </h2>
-          
+
+          {error && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-red-800 font-medium">⚠️ {error}</p>
+            </div>
+          )}
+
           {loading && (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <div className="flex flex-col items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+              <p className="text-gray-600">
+                {resultType === 'description' && 'Генерация описаний картин...'}
+                {resultType === 'exhibition' && 'Генерация вариантов названий выставки...'}
+                {resultType === 'poster' && 'Генерация макета афиши...'}
+                {!resultType && 'Обработка...'}
+              </p>
             </div>
           )}
 
@@ -181,38 +317,57 @@ export default function Home() {
               <p className="text-gray-700 font-medium mb-4">
                 Выберите один из вариантов названия выставки:
               </p>
-              {exhibitionOptions.map((option, index) => (
+              {exhibitionOptions.map((option) => (
                 <button
-                  key={index}
+                  key={option.id}
                   onClick={() => handleSelectExhibition(option)}
                   className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
-                    selectedExhibition === option
+                    selectedExhibition?.id === option.id
                       ? 'border-purple-600 bg-purple-50'
                       : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50'
                   }`}
                 >
-                  <span className="font-semibold text-gray-800">{option}</span>
+                  <span className="font-semibold text-gray-800">{option.title}</span>
                 </button>
               ))}
               {selectedExhibition && (
                 <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
                   <p className="text-green-800 font-medium">
-                    ✓ Выбрано: {selectedExhibition}
+                    ✓ Выбрано: {selectedExhibition.title}
                   </p>
                 </div>
               )}
             </div>
           )}
 
-          {!loading && result && (
+          {!loading && result && resultType === 'description' && (
             <div className="prose max-w-none">
               <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                <p className="text-gray-700 whitespace-pre-wrap">{result}</p>
+                <div className="text-gray-700 whitespace-pre-wrap">{result}</div>
               </div>
             </div>
           )}
 
-          {!loading && !result && resultType !== 'exhibition' && (
+          {!loading && result && resultType === 'poster' && posterResult && (
+            <div className="space-y-4">
+              <div className="bg-purple-50 p-6 rounded-lg border border-purple-200">
+                <h3 className="text-xl font-semibold text-purple-900 mb-3">
+                  Макет афиши
+                </h3>
+                <p className="text-gray-700 whitespace-pre-wrap">{posterResult.poster}</p>
+              </div>
+              <div className="bg-blue-50 p-6 rounded-lg border border-blue-200">
+                <h3 className="text-xl font-semibold text-blue-900 mb-3">
+                  Описание выставки
+                </h3>
+                <p className="text-gray-700 whitespace-pre-wrap">
+                  {posterResult.description}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!loading && !result && resultType !== 'exhibition' && !error && (
             <div className="text-center py-8 text-gray-400">
               <p>Результаты будут отображены здесь</p>
             </div>
