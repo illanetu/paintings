@@ -42,6 +42,7 @@ export default function Home() {
   
   const abortControllerRef = useRef<AbortController | null>(null)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Очистка ресурсов при размонтировании
   useEffect(() => {
@@ -89,17 +90,27 @@ export default function Home() {
   }
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
+    if (e.target.files && e.target.files.length > 0) {
       const files = Array.from(e.target.files)
+      console.log(`Выбрано файлов: ${files.length}`, files.map(f => f.name))
       const { valid, errors } = validateImages(files)
+      console.log(`Валидных файлов: ${valid.length}`, valid.map(f => f.name))
 
       if (errors.length > 0) {
         setError(errors.join('\n'))
+        // Сбрасываем input даже при ошибке
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
         return
       }
 
       if (valid.length === 0) {
         setError('Нет валидных изображений для загрузки')
+        // Сбрасываем input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
         return
       }
 
@@ -108,6 +119,7 @@ export default function Home() {
       setError(null)
       try {
         const optimizedFiles = await optimizeImages(valid)
+        // Заменяем все файлы новыми (при новом выборе)
         setImages(optimizedFiles)
         setResult(null)
         setResultType(null)
@@ -126,6 +138,10 @@ export default function Home() {
         setImages(valid)
       } finally {
         setOptimizing(false)
+        // Сбрасываем значение input после обработки
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
       }
     }
   }
@@ -477,6 +493,7 @@ export default function Home() {
           </label>
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
             <input
+              ref={fileInputRef}
               type="file"
               multiple
               accept="image/*"
@@ -518,6 +535,11 @@ export default function Home() {
               <p className="text-sm text-gray-600 mb-2">
                 Загружено картинок: {images.length} / {MAX_FILES}
               </p>
+              {images.length === 1 && (
+                <p className="text-xs text-yellow-600 mb-2">
+                  💡 Вы можете выбрать несколько файлов одновременно, удерживая Ctrl (или Cmd на Mac) при выборе
+                </p>
+              )}
               <div className="flex flex-wrap gap-2">
                 {images.map((img, index) => (
                   <div
