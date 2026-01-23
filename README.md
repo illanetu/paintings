@@ -9,7 +9,7 @@ PROJECT.MD - лписание проекта
 1. Установите зависимости:
 
 ```powershell
-npm install
+pnpm install
 ```
 
 2. Настройте API ключ OpenRouter:
@@ -38,7 +38,7 @@ OpenRouter предоставляет доступ к различным мод�
 Запустите приложение в режиме разработки:
 
 ```powershell
-npm run dev
+pnpm run dev
 ```
 
 Откройте [http://localhost:3000](http://localhost:3000) в браузере.
@@ -48,6 +48,6 @@ npm run dev
 Для сборки production версии:
 
 ```powershell
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```

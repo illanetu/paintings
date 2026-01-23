@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { optimizeImages } from '@/lib/imageOptimization'
 import { cacheManager } from '@/lib/cache'
 
