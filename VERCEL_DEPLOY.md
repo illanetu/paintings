@@ -66,6 +66,29 @@ git push origin main
 
 Переменные применяются только после нового деплоя.
 
+### «401 Unauthorized. User not found» (OpenRouter API)
+
+Эта ошибка означает проблему с аутентификацией в OpenRouter.
+
+**Решение:**
+
+1. **Проверьте API-ключ:**
+   - Откройте [OpenRouter Keys](https://openrouter.ai/keys)
+   - Убедитесь, что ключ активен и скопирован полностью (начинается с `sk-or-v1-...`)
+   - Если ключ недействителен, создайте новый
+
+2. **Проверьте HTTP_REFERER:**
+   - В Vercel → Settings → Environment Variables
+   - `HTTP_REFERER` должен точно совпадать с URL вашего приложения
+   - Например: если приложение на `https://paintings-abc123.vercel.app`, то `HTTP_REFERER` должен быть `https://paintings-abc123.vercel.app` (без слеша в конце)
+
+3. **Обновите переменные и переразверните:**
+   - Сохраните изменения в Environment Variables
+   - Deployments → три точки → **Redeploy**
+
+4. **Проверьте баланс на OpenRouter:**
+   - Убедитесь, что на аккаунте есть средства для использования API
+
 ### Другие проблемы с API
 
 - Проверьте логи: Vercel → проект → **Logs** (или **Functions** → Logs)
