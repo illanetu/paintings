@@ -23,15 +23,15 @@ git push origin main
 
 ### 3. Переменные окружения
 
-**Важно:** Добавьте перед деплоем!
+**Важно:** Добавьте **до** первого деплоя в разделе "Environment Variables":
 
-```
-AI_API_KEY = ваш_api_ключ_openrouter
-AI_MODEL = openai/gpt-4o
-HTTP_REFERER = https://your-project-name.vercel.app
-```
+| Имя | Значение |
+|-----|----------|
+| `AI_API_KEY` | ваш API-ключ OpenRouter |
+| `AI_MODEL` | `openai/gpt-4o` |
+| `HTTP_REFERER` | URL проекта (например `https://ваш-проект.vercel.app`) |
 
-> Для `HTTP_REFERER` можно временно указать любой URL, затем обновить после первого деплоя на реальный домен проекта.
+> `HTTP_REFERER` можно указать после первого деплоя, затем обновить и сделать Redeploy.
 
 ### 4. Деплой
 
@@ -54,10 +54,22 @@ HTTP_REFERER = https://your-project-name.vercel.app
 - Проверьте логи на Vercel
 - Убедитесь, что сборка проходит локально: `pnpm build`
 
-### API не работает
+### «AI_API_KEY не установлен в переменных окружения»
 
-- Проверьте переменные окружения (`AI_API_KEY`, `HTTP_REFERER`)
-- Проверьте логи функций: Vercel Dashboard → Functions → Logs
+1. Откройте [Vercel Dashboard](https://vercel.com/dashboard) → ваш проект
+2. **Settings** → **Environment Variables**
+3. Добавьте переменные:
+   - `AI_API_KEY` — API-ключ с [OpenRouter](https://openrouter.ai/keys)
+   - `AI_MODEL` — `openai/gpt-4o`
+   - `HTTP_REFERER` — URL вашего проекта (например `https://paintings-xxx.vercel.app`)
+4. **Обязательно:** Deployments → три точки у последнего деплоя → **Redeploy**
+
+Переменные применяются только после нового деплоя.
+
+### Другие проблемы с API
+
+- Проверьте логи: Vercel → проект → **Logs** (или **Functions** → Logs)
+- Убедитесь, что `HTTP_REFERER` совпадает с доменом приложения
 
 ## Автоматический деплой
 
