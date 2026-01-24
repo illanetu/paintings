@@ -56,6 +56,11 @@ export async function callOpenRouter(
     throw new Error('AI_API_KEY не установлен в переменных окружения')
   }
 
+  // Проверка формата ключа
+  if (!apiKey.startsWith('sk-or-v1-')) {
+    console.warn('⚠️ API ключ не соответствует формату OpenRouter (должен начинаться с sk-or-v1-)')
+  }
+
   const model = options?.model || process.env.AI_MODEL || 'openai/gpt-4o'
   const httpReferer = process.env.HTTP_REFERER || 'http://localhost:3000'
 
@@ -80,8 +85,21 @@ export async function callOpenRouter(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}))
+      const errorMessage = errorData?.error?.message || errorData?.message || 'Unknown error'
+      
+      // Детальная диагностика для 401 ошибки
+      if (response.status === 401) {
+        console.error('❌ OpenRouter API: 401 Unauthorized')
+        console.error('Проверьте:')
+        console.error('1. API ключ активен на https://openrouter.ai/keys')
+        console.error('2. Ключ скопирован полностью (начинается с sk-or-v1-)')
+        console.error('3. HTTP_REFERER установлен правильно')
+        console.error(`Текущий HTTP_REFERER: ${httpReferer}`)
+        console.error(`Длина API ключа: ${apiKey.length} символов`)
+      }
+      
       throw new Error(
-        `OpenRouter API error: ${response.status} ${response.statusText}. ${JSON.stringify(errorData)}`
+        `OpenRouter API error: ${response.status} ${response.statusText}. ${errorMessage}`
       )
     }
 
